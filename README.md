@@ -1,4 +1,4 @@
-# exercise-06# Exercise 6: Feed-Forward Neural Networks
+# Exercise 6: Feed-Forward Neural Networks
 
 Deadline: 02.12.2026 23:59
 
