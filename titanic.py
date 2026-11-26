@@ -1,4 +1,10 @@
 import pandas as pd
+import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.preprocessing import StandardScaler
 
 # read the data from a CSV file (included in the repository)
 df = pd.read_csv("data/train.csv")
@@ -26,23 +32,52 @@ y = df["Survived"]
 x = df.drop("Survived", axis=1)
 
 # 2. Secondly, we need to split training and test data. This can be done with the function [`sklearn.model_selection.train_test_split()`](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html#sklearn.model_selection.train_test_split) from the `scikit-learn` library.
-
-from sklearn.model_selection import train_test_split
-
 x_train, x_test, y_train, y_test = train_test_split(x, y, random_state=0, test_size=0.1)
 
-# 3. Finally, initialize a LogisticRegression object with a `liblinear` solver, and fit it to the training data.
-from sklearn.linear_model import LogisticRegression
+# Scale from training data only, the network input has one value per feature
+print("Input shape:", x_train.shape[1])
+scaler = StandardScaler()
+x_train = torch.tensor(scaler.fit_transform(x_train), dtype=torch.float32)
+x_test = torch.tensor(scaler.transform(x_test), dtype=torch.float32)
+train_data = TensorDataset(x_train, torch.tensor(y_train.to_numpy(), dtype=torch.long))
+loader = DataLoader(train_data, batch_size=32, shuffle=True)
+torch.manual_seed(0)
 
-classifier = LogisticRegression(random_state=0, solver="liblinear")
-classifier.fit(x_train, y_train)
+def evaluate(model, epochs=100, learning_rate=0.01):
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    for _ in range(epochs):
+        for xb, yb in loader:
+            optimizer.zero_grad()
+            nn.functional.nll_loss(model(xb).clamp_min(1e-8).log(), yb).backward()
+            optimizer.step()
+    with torch.no_grad():
+        predictions = model(x_test).argmax(dim=1).numpy()
+    print("precision: {:.3f}, recall: {:.3f}, f1: {:.3f}".format(
+        precision_score(y_test, predictions), recall_score(y_test, predictions),
+        f1_score(y_test, predictions)))
 
-# 4. Lastly, calculate precision/recall/f-score on the test data using the appropriate functions from `scikit-learn`.
-y_pred = classifier.predict(x_test)
 
-from sklearn.metrics import precision_score, recall_score, f1_score
+# Step 4.1: 10-unit hidden softmax layer, softmax output
+print("Network 1: hidden layer 10 (softmax)")
+evaluate(nn.Sequential(nn.Linear(x_train.shape[1], 10), nn.Softmax(dim=1),
+                       nn.Linear(10, 2), nn.Softmax(dim=1)))
 
-print("precision: "+ str(precision_score(y_test, y_pred)))
-print("recall: "+ str(recall_score(y_test, y_pred)))
-print("f1: "+ str(f1_score(y_test, y_pred)))
+# Step 4.2: 20-unit sigmoid and 10-unit ReLU hidden layers, softmax output
+print("Network 2: hidden layers 20 (sigmoid), 10 (relu)")
+evaluate(nn.Sequential(nn.Linear(x_train.shape[1], 20), nn.Sigmoid(),
+                       nn.Linear(20, 10), nn.ReLU(), nn.Linear(10, 2),
+                       nn.Softmax(dim=1)))
 
+# Step 4.3: Experiments with other layer settings
+print("Experiment 1: hidden layers 32 and 16 (relu)")
+evaluate(nn.Sequential(nn.Linear(x_train.shape[1], 32), nn.ReLU(),
+                       nn.Linear(32, 16), nn.ReLU(), nn.Linear(16, 2),
+                       nn.Softmax(dim=1)))
+print("Experiment 2: hidden layers 100 and 200 (relu)")
+evaluate(nn.Sequential(nn.Linear(x_train.shape[1], 100), nn.ReLU(),
+                       nn.Linear(100, 200), nn.ReLU(), nn.Linear(200, 2),
+                       nn.Softmax(dim=1)))
+print("Experiment 3: hidden layers 50 (sigmoid) and 25 (relu)")
+evaluate(nn.Sequential(nn.Linear(x_train.shape[1], 50), nn.Sigmoid(),
+                       nn.Linear(50, 25), nn.ReLU(), nn.Linear(25, 2),
+                       nn.Softmax(dim=1)))
