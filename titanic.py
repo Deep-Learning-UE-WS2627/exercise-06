@@ -31,18 +31,58 @@ from sklearn.model_selection import train_test_split
 
 x_train, x_test, y_train, y_test = train_test_split(x, y, random_state=0, test_size=0.1)
 
-# 3. Finally, initialize a LogisticRegression object with a `liblinear` solver, and fit it to the training data.
-from sklearn.linear_model import LogisticRegression
-
-classifier = LogisticRegression(random_state=0, solver="liblinear")
-classifier.fit(x_train, y_train)
-
-# 4. Lastly, calculate precision/recall/f-score on the test data using the appropriate functions from `scikit-learn`.
-y_pred = classifier.predict(x_test)
-
+# 3. Train feed-forward neural networks with PyTorch.
+import torch
+from torch import nn
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import precision_score, recall_score, f1_score
 
-print("precision: "+ str(precision_score(y_test, y_pred)))
-print("recall: "+ str(recall_score(y_test, y_pred)))
-print("f1: "+ str(f1_score(y_test, y_pred)))
+# Fit the scaler on training data only to avoid data leakage.
+scaler = StandardScaler()
+X_train = torch.tensor(scaler.fit_transform(x_train), dtype=torch.float32)
+X_test = torch.tensor(scaler.transform(x_test), dtype=torch.float32)
+Y_train = torch.tensor(y_train.to_numpy(), dtype=torch.long)
 
+input_size = X_train.shape[1]
+print("Input shape:", x.shape)
+print("Train/test:", X_train.shape, X_test.shape)
+
+def make_model(architecture):
+    if architecture == 1:
+        return nn.Sequential(nn.Linear(input_size, 10), nn.Softmax(dim=1),
+                             nn.Linear(10, 2), nn.Softmax(dim=1))
+    return nn.Sequential(nn.Linear(input_size, 20), nn.Sigmoid(),
+                         nn.Linear(20, 10), nn.ReLU(),
+                         nn.Linear(10, 2), nn.Softmax(dim=1))
+
+
+def train_and_evaluate(architecture, epochs=300, lr=0.01):
+    torch.manual_seed(0)
+    model = make_model(architecture)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    # NLLLoss expects log probabilities, not softmax probabilities.
+    criterion = nn.NLLLoss()
+    model.train()
+    for _ in range(epochs):
+        optimizer.zero_grad()
+        probabilities = model(X_train)
+        loss = criterion(probabilities.clamp_min(1e-12).log(), Y_train)
+        loss.backward()
+        optimizer.step()
+    model.eval()
+    with torch.no_grad():
+        y_pred = model(X_test).argmax(dim=1).numpy()
+    print(f"Model {architecture}, epochs={epochs}, lr={lr}: "
+          f"precision={precision_score(y_test, y_pred, zero_division=0):.4f}, "
+          f"recall={recall_score(y_test, y_pred, zero_division=0):.4f}, "
+          f"f1={f1_score(y_test, y_pred, zero_division=0):.4f}")
+
+
+# Limit CPU threading for this small dataset.
+torch.set_num_threads(1)
+train_and_evaluate(1)
+train_and_evaluate(2)
+# Step 4.3: Compare learning rates and training duration.
+train_and_evaluate(1, epochs=600, lr=0.005)
+train_and_evaluate(2, epochs=600, lr=0.005)
+train_and_evaluate(2, epochs=100, lr=0.01)
